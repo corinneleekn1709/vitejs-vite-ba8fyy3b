@@ -169,8 +169,8 @@ function ModeSelector({ onSelect }) {
   return (
     <div style={{ fontFamily:"Inter,Arial,sans-serif", minHeight:"100vh", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"32px 20px", background:"#f8fafc" }}>
       <div style={{ textAlign:"center", marginBottom:48 }}>
-        <h1 style={{ margin:0, fontSize:28, fontWeight:700, color:"#1e293b" }}>Version Comparison Builder</h1>
-        <p style={{ margin:"10px 0 0", color:"#94a3b8", fontSize:15 }}>What type of screenshots are you comparing?</p>
+        <h1 style={{ margin:0, fontSize:28, fontWeight:700, color:"#1e293b" }}>App Version Comparison</h1>
+        <p style={{ margin:"10px 0 0", color:"#94a3b8", fontSize:15 }}>Compare screenshots for Web or Mobile.</p>
       </div>
       <div style={{ display:"flex", gap:24, flexWrap:"wrap", justifyContent:"center", alignItems:"stretch" }}>
         {modes.map(m => (
@@ -400,7 +400,21 @@ export default function App() {
           <h1 style={{ margin:0, fontSize:24, fontWeight:700, color:"#1e293b" }}>{mode==="web" ? "Web" : "Mobile"} Comparison Builder</h1>
           <p style={{ margin:"4px 0 0", color:"#94a3b8", fontSize:13 }}>{mode==="web" ? "Desktop / browser screenshots" : "Mobile screenshots — portrait layout"}</p>
         </div>
-        <button onClick={() => setMode(null)} style={{ border:"1px solid #e2e8f0", background:"#fff", borderRadius:10, padding:"8px 16px", fontSize:13, color:"#64748b", cursor:"pointer", fontWeight:600 }}>← Change mode</button>
+        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+          <button onClick={() => { setCards([newCard(1)]); nextId.current = 2; setExportError(""); setPreviewUrl(null); }}
+            style={{ border:"1px solid #fecaca", background:"#fff", borderRadius:10, padding:"8px 14px", fontSize:13, color:"#f87171", cursor:"pointer", fontWeight:600, display:"flex", alignItems:"center", gap:6, transition:"all 0.15s" }}
+            onMouseEnter={e => { e.currentTarget.style.background="#fef2f2"; }}
+            onMouseLeave={e => { e.currentTarget.style.background="#fff"; }}
+          >
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M2 7a5 5 0 1 0 1.5-3.5L2 2" stroke="#f87171" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M2 2v3h3" stroke="#f87171" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            Restart
+          </button>
+          <div style={{ width:"1px", height:24, background:"#e2e8f0" }} />
+          <button onClick={() => setMode(null)} style={{ border:"1px solid #e2e8f0", background:"#fff", borderRadius:10, padding:"8px 16px", fontSize:13, color:"#64748b", cursor:"pointer", fontWeight:600 }}>← Change mode</button>
+        </div>
       </div>
 
       <div style={{ display:"flex", flexDirection:"column", gap:24 }}>
