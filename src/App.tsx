@@ -38,8 +38,6 @@ function AnnotationEditor({ imageSrc, annotations, onChange, onClose }) {
       ctx.strokeStyle = "#ef4444";
       ctx.lineWidth = 3;
       ctx.strokeRect(r.x * canvas.width, r.y * canvas.height, r.w * canvas.width, r.h * canvas.height);
-      ctx.fillStyle = "rgba(239,68,68,0.08)";
-      ctx.fillRect(r.x * canvas.width, r.y * canvas.height, r.w * canvas.width, r.h * canvas.height);
     });
   }, [annotations, drawing, start, current]);
 
@@ -247,8 +245,6 @@ async function buildCanvas(cards, mode) {
             ctx.strokeStyle = "#ef4444";
             ctx.lineWidth = 3;
             ctx.strokeRect(x + r.x * SLOT_W, y + r.y * imgH, r.w * SLOT_W, r.h * imgH);
-            ctx.fillStyle = "rgba(239,68,68,0.08)";
-            ctx.fillRect(x + r.x * SLOT_W, y + r.y * imgH, r.w * SLOT_W, r.h * imgH);
           });
         }
       }
@@ -468,8 +464,6 @@ function AnnotatedImage({ src, annotations }) {
       ctx.strokeStyle = "#ef4444";
       ctx.lineWidth = Math.max(2, img.naturalWidth * 0.003);
       ctx.strokeRect(r.x * img.naturalWidth, r.y * img.naturalHeight, r.w * img.naturalWidth, r.h * img.naturalHeight);
-      ctx.fillStyle = "rgba(239,68,68,0.08)";
-      ctx.fillRect(r.x * img.naturalWidth, r.y * img.naturalHeight, r.w * img.naturalWidth, r.h * img.naturalHeight);
     });
   };
 
