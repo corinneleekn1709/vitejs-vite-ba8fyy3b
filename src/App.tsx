@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 
 const readFile = (file, cb) => {
   const r = new FileReader();
@@ -15,6 +15,106 @@ function loadImg(src) {
   });
 }
 
+// ── Annotation Editor ──────────────────────────────────────────────────────────
+function AnnotationEditor({ imageSrc, annotations, onChange, onClose }) {
+  const canvasRef = useRef();
+  const [drawing, setDrawing] = useState(false);
+  const [start, setStart] = useState(null);
+  const [current, setCurrent] = useState(null);
+  const [imgSize, setImgSize] = useState({ w: 0, h: 0 });
+  const imgRef = useRef();
+
+  const draw = useCallback(() => {
+    const canvas = canvasRef.current;
+    const img = imgRef.current;
+    if (!canvas || !img) return;
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const rects = drawing && start && current
+      ? [...annotations, { x: Math.min(start.x, current.x), y: Math.min(start.y, current.y), w: Math.abs(current.x - start.x), h: Math.abs(current.y - start.y) }]
+      : annotations;
+    rects.forEach((r, i) => {
+      ctx.strokeStyle = "#ef4444";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(r.x * canvas.width, r.y * canvas.height, r.w * canvas.width, r.h * canvas.height);
+      ctx.fillStyle = "rgba(239,68,68,0.08)";
+      ctx.fillRect(r.x * canvas.width, r.y * canvas.height, r.w * canvas.width, r.h * canvas.height);
+    });
+  }, [annotations, drawing, start, current]);
+
+  useEffect(() => {
+    const img = new window.Image();
+    img.onload = () => {
+      imgRef.current = img;
+      setImgSize({ w: img.naturalWidth, h: img.naturalHeight });
+    };
+    img.src = imageSrc;
+  }, [imageSrc]);
+
+  useEffect(() => { draw(); }, [draw, imgSize]);
+
+  const getPos = e => {
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: (e.clientX - rect.left) / rect.width,
+      y: (e.clientY - rect.top) / rect.height,
+    };
+  };
+
+  const onMouseDown = e => { setDrawing(true); const p = getPos(e); setStart(p); setCurrent(p); };
+  const onMouseMove = e => { if (drawing) setCurrent(getPos(e)); };
+  const onMouseUp = e => {
+    if (!drawing || !start) return;
+    const p = getPos(e);
+    const r = { x: Math.min(start.x, p.x), y: Math.min(start.y, p.y), w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y) };
+    if (r.w > 0.01 && r.h > 0.01) onChange([...annotations, r]);
+    setDrawing(false); setStart(null); setCurrent(null);
+  };
+
+  const aspect = imgSize.h && imgSize.w ? imgSize.h / imgSize.w : 0.75;
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.8)", zIndex:2000, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24 }}>
+      <div style={{ background:"#fff", borderRadius:16, padding:16, width:"100%", maxWidth:900, boxShadow:"0 16px 48px rgba(0,0,0,0.4)" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+          <div>
+            <span style={{ fontWeight:700, fontSize:15, color:"#1e293b" }}>Annotate Screenshot</span>
+            <span style={{ fontSize:12, color:"#94a3b8", marginLeft:10 }}>Draw rectangles to highlight areas</span>
+          </div>
+          <div style={{ display:"flex", gap:8 }}>
+            <button onClick={() => onChange(annotations.slice(0,-1))} disabled={annotations.length===0}
+              style={{ border:"1px solid #e2e8f0", background:"#fff", borderRadius:8, padding:"5px 12px", fontSize:12, color: annotations.length ? "#64748b" : "#cbd5e1", cursor: annotations.length ? "pointer" : "default", fontWeight:600 }}>
+              ↩ Undo
+            </button>
+            <button onClick={() => onChange([])}  disabled={annotations.length===0}
+              style={{ border:"1px solid #fecaca", background:"#fff", borderRadius:8, padding:"5px 12px", fontSize:12, color: annotations.length ? "#f87171" : "#fecaca", cursor: annotations.length ? "pointer" : "default", fontWeight:600 }}>
+              Clear all
+            </button>
+            <button onClick={onClose}
+              style={{ border:"none", background:"#1e293b", borderRadius:8, padding:"5px 16px", fontSize:12, color:"#fff", cursor:"pointer", fontWeight:600 }}>
+              Done
+            </button>
+          </div>
+        </div>
+        <div style={{ position:"relative", width:"100%", paddingBottom: (aspect * 100) + "%", cursor:"crosshair", borderRadius:8, overflow:"hidden", border:"1px solid #e2e8f0" }}>
+          <canvas
+            ref={canvasRef}
+            width={900}
+            height={Math.round(900 * aspect)}
+            onMouseDown={onMouseDown}
+            onMouseMove={onMouseMove}
+            onMouseUp={onMouseUp}
+            style={{ position:"absolute", inset:0, width:"100%", height:"100%" }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Canvas helpers ─────────────────────────────────────────────────────────────
 function rrect(ctx, x, y, w, h, r) {
   ctx.beginPath();
   ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.arcTo(x+w,y,x+w,y+r,r);
@@ -35,10 +135,30 @@ function rrectBot(ctx,x,y,w,h,r) {
   ctx.arcTo(x,y+h,x,y+h-r,r); ctx.lineTo(x,y); ctx.closePath();
 }
 
+// Render image + annotations to a new canvas, return data URL
+async function applyAnnotations(imgSrc, annotations, targetW, targetH) {
+  if (!annotations || annotations.length === 0) return null;
+  const img = await loadImg(imgSrc);
+  const c = document.createElement("canvas");
+  c.width = targetW; c.height = targetH;
+  const ctx = c.getContext("2d");
+  const s = Math.min(targetW / img.width, targetH / img.height);
+  const dw = img.width * s, dh = img.height * s;
+  ctx.drawImage(img, (targetW-dw)/2, (targetH-dh)/2, dw, dh);
+  annotations.forEach(r => {
+    ctx.strokeStyle = "#ef4444";
+    ctx.lineWidth = Math.max(2, targetW * 0.003);
+    ctx.strokeRect(r.x * targetW, r.y * targetH, r.w * targetW, r.h * targetH);
+    ctx.fillStyle = "rgba(239,68,68,0.08)";
+    ctx.fillRect(r.x * targetW, r.y * targetH, r.w * targetW, r.h * targetH);
+  });
+  return c.toDataURL("image/png");
+}
+
 async function buildCanvas(cards, mode) {
   const SCALE = 3;
-  const CW = 1200, PAD = 56, GAP = 28, CARD_GAP = 56, LABEL_H = 40;
-  const SLOT_W = (CW - PAD * 2 - GAP) / 2;
+  const CW = 1200, GAP = 28, CARD_GAP = 24, LABEL_H = 40;
+  const SLOT_W = (CW - GAP) / 2;
 
   const pairs = [];
   for (const card of cards) {
@@ -47,21 +167,22 @@ async function buildCanvas(cards, mode) {
     pairs.push([a, b]);
   }
 
-  let imgH = 400;
-  let maxRatio = 0;
-  for (const [a, b] of pairs) {
-    if (a && a.width > 0) maxRatio = Math.max(maxRatio, a.height / a.width);
-    if (b && b.width > 0) maxRatio = Math.max(maxRatio, b.height / b.width);
-  }
-  if (maxRatio > 0) imgH = Math.round(SLOT_W * maxRatio);
+  const cardImgHeights = cards.map((c, ci) => {
+    const [a, b] = pairs[ci];
+    let ratio = 0;
+    if (a && a.width > 0) ratio = Math.max(ratio, a.height / a.width);
+    if (b && b.width > 0) ratio = Math.max(ratio, b.height / b.width);
+    return ratio > 0 ? Math.round(SLOT_W * ratio) : 400;
+  });
 
-  const cardHeights = cards.map(c => {
-    let h = LABEL_H + imgH;
+  const cardHeights = cards.map((c, ci) => {
+    let h = LABEL_H + cardImgHeights[ci];
     if (c.title) h += 56;
     if (c.subtitle) h += 44;
     return h;
   });
-  const totalH = PAD + cardHeights.reduce((s,h,i) => s + h + (i < cardHeights.length-1 ? CARD_GAP : 0), 0) + PAD;
+
+  const totalH = CARD_GAP + cardHeights.reduce((s, h, i) => s + h + 28 + (i < cardHeights.length - 1 ? CARD_GAP : 0), 0);
 
   const canvas = document.createElement("canvas");
   canvas.width = CW * SCALE;
@@ -69,20 +190,21 @@ async function buildCanvas(cards, mode) {
   const ctx = canvas.getContext("2d");
   ctx.scale(SCALE, SCALE);
 
-  ctx.fillStyle = "#f1f5f9";
+  ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, CW, totalH);
 
-  let y = PAD;
+  let y = CARD_GAP;
+
   for (let ci = 0; ci < cards.length; ci++) {
     const card = cards[ci];
     const [imgA, imgB] = pairs[ci];
+    const imgH = cardImgHeights[ci];
     const cardH = cardHeights[ci];
-    const cardW = CW - PAD * 2;
 
-    ctx.fillStyle = "rgba(0,0,0,0.05)";
-    rrect(ctx, PAD-8+3, y-8+4, cardW+16, cardH+16, 20); ctx.fill();
     ctx.fillStyle = "#ffffff";
-    rrect(ctx, PAD-8, y-8, cardW+16, cardH+16, 20); ctx.fill();
+    rrect(ctx, 0, y, CW, cardH + 28, 0); ctx.fill();
+    ctx.fillStyle = "#e2e8f0";
+    ctx.fillRect(0, y + cardH + 28, CW, 1);
 
     if (card.title) {
       ctx.fillStyle = "#1e293b";
@@ -92,20 +214,21 @@ async function buildCanvas(cards, mode) {
       y += 56;
     }
 
-    const leftX = PAD;
-    const rightX = PAD + SLOT_W + GAP;
+    const leftX = 0;
+    const rightX = SLOT_W + GAP;
 
-    for (const [lx, lbl] of [[leftX, card.newLabel || "After"], [rightX, card.oldLabel || "Before"]]) {
+    for (let li = 0; li < 2; li++) {
+      const lx = li === 0 ? leftX : rightX;
+      const lbl = li === 0 ? (card.newLabel || "After") : (card.oldLabel || "Before");
       ctx.fillStyle = "#f1f5f9";
       rrectTop(ctx, lx, y, SLOT_W, LABEL_H, 10); ctx.fill();
       ctx.fillStyle = "#64748b";
       ctx.font = "bold 16px Arial, sans-serif";
       ctx.textAlign = "center";
       ctx.fillText(lbl, lx + SLOT_W/2, y + LABEL_H/2 + 6);
-    }
-    y += LABEL_H;
+    }    y += LABEL_H;
 
-    const drawSlot = (img, isNoVersion, x) => {
+    const drawSlot = async (img, isNoVersion, x, annotations) => {
       ctx.save();
       rrectBot(ctx, x, y, SLOT_W, imgH, 10); ctx.clip();
       ctx.fillStyle = "#f8fafc"; ctx.fillRect(x, y, SLOT_W, imgH);
@@ -117,21 +240,32 @@ async function buildCanvas(cards, mode) {
         ctx.fillText("This is a new feature", x + SLOT_W/2, y + imgH/2 + 16);
       } else {
         const s = Math.min(SLOT_W/img.width, imgH/img.height);
-        ctx.drawImage(img, x+(SLOT_W-img.width*s)/2, y+(imgH-img.height*s)/2, img.width*s, img.height*s);
+        const dw = img.width*s, dh = img.height*s;
+        ctx.drawImage(img, x+(SLOT_W-dw)/2, y+(imgH-dh)/2, dw, dh);
+        if (annotations && annotations.length > 0) {
+          annotations.forEach(r => {
+            ctx.strokeStyle = "#ef4444";
+            ctx.lineWidth = 3;
+            ctx.strokeRect(x + r.x * SLOT_W, y + r.y * imgH, r.w * SLOT_W, r.h * imgH);
+            ctx.fillStyle = "rgba(239,68,68,0.08)";
+            ctx.fillRect(x + r.x * SLOT_W, y + r.y * imgH, r.w * SLOT_W, r.h * imgH);
+          });
+        }
       }
       ctx.restore();
     };
 
-    drawSlot(imgB, card.newIsNew, leftX);
-    drawSlot(imgA, card.oldIsNew, rightX);
+    await drawSlot(imgB, card.newIsNew, leftX, card.newAnnotations);
+    await drawSlot(imgA, card.oldIsNew, rightX, card.oldAnnotations);
     y += imgH;
 
     if (card.subtitle) {
       ctx.fillStyle = "#64748b"; ctx.font = "15px Arial, sans-serif"; ctx.textAlign = "center";
       ctx.fillText(card.subtitle, CW/2, y+28); y += 44;
     }
-    y += CARD_GAP;
+    y += CARD_GAP + 28;
   }
+
   return canvas;
 }
 
@@ -154,12 +288,10 @@ async function doDownload(cards, mode) {
   }
 }
 
-// ── Shared ─────────────────────────────────────────────────────────────────────
 const iStyle = { width:"100%", boxSizing:"border-box", border:"1px solid #e2e8f0", borderRadius:8, padding:"9px 12px", fontSize:14, outline:"none", color:"#1e293b", background:"#f8fafc" };
 const Lbl = ({ children }) => <div style={{ fontWeight:600, fontSize:12, color:"#374151", marginBottom:5 }}>{children}</div>;
-const newCard = id => ({ id, title:"", subtitle:"", oldLabel:"2025", newLabel:"2026", oldImg:null, newImg:null, oldIsNew:false, newIsNew:false, done:false });
+const newCard = id => ({ id, title:"", subtitle:"", oldLabel:"2025", newLabel:"2026", oldImg:null, newImg:null, oldIsNew:false, newIsNew:false, oldAnnotations:[], newAnnotations:[], done:false });
 
-// ── ModeSelector ───────────────────────────────────────────────────────────────
 function ModeSelector({ onSelect }) {
   const [hovered, setHovered] = useState(null);
   const modes = [
@@ -196,13 +328,13 @@ function ModeSelector({ onSelect }) {
   );
 }
 
-// ── UploadBox ──────────────────────────────────────────────────────────────────
-function UploadBox({ label, image, onUpload, isNoVersion, onToggleNoVersion }) {
+function UploadBox({ label, image, onUpload, isNoVersion, onToggleNoVersion, annotations, onAnnotationsChange }) {
   const inputRef = useRef();
   const pasteRef = useRef();
   const [tab, setTab] = useState("upload");
   const [pasting, setPasting] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [annotating, setAnnotating] = useState(false);
 
   const handleDrop = e => {
     e.preventDefault(); setDragging(false);
@@ -218,6 +350,14 @@ function UploadBox({ label, image, onUpload, isNoVersion, onToggleNoVersion }) {
 
   return (
     <div style={{ flex:1, display:"flex", flexDirection:"column", gap:8 }}>
+      {annotating && image && (
+        <AnnotationEditor
+          imageSrc={image}
+          annotations={annotations || []}
+          onChange={onAnnotationsChange}
+          onClose={() => setAnnotating(false)}
+        />
+      )}
       {!image && !isNoVersion && (
         <div style={{ display:"flex", background:"#f1f5f9", borderRadius:8, padding:3, gap:2, width:"100%" }}>
           {["upload","paste"].map(t => (
@@ -242,39 +382,52 @@ function UploadBox({ label, image, onUpload, isNoVersion, onToggleNoVersion }) {
           <div style={{ fontSize:11, color:"#94a3b8" }}>This is a new feature</div>
         </div>
       ) : (
-        <div
-          onClick={() => { if (image) return; if (tab==="upload") inputRef.current.click(); else { setPasting(true); pasteRef.current && pasteRef.current.focus(); } }}
-          onPaste={tab==="paste" ? handlePaste : undefined}
-          onDragOver={tab==="upload" && !image ? e => { e.preventDefault(); setDragging(true); } : undefined}
-          onDragLeave={tab==="upload" && !image ? () => setDragging(false) : undefined}
-          onDrop={tab==="upload" && !image ? handleDrop : undefined}
-          tabIndex={tab==="paste" && !image ? 0 : undefined}
-          ref={tab==="paste" ? pasteRef : undefined}
-          onFocus={() => tab==="paste" && setPasting(true)}
-          onBlur={() => setPasting(false)}
-          style={{
-            width:"100%", boxSizing:"border-box",
-            border: image ? "2px solid #94a3b8" : (dragging||pasting) ? "2px dashed #475569" : "2px dashed #cbd5e1",
-            borderRadius:12, background: image ? "transparent" : "#f8fafc",
-            minHeight:220, display:"flex", alignItems:"center", justifyContent:"center",
-            cursor: image ? "default" : "pointer", overflow:"hidden", transition:"all 0.2s", outline:"none",
-          }}
-        >
-          {image ? (
-            <img src={image} alt={label} style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }} />
-          ) : (
-            <div style={{ textAlign:"center", color: dragging ? "#475569" : "#94a3b8", padding:20 }}>
-              <div style={{ fontSize:32, marginBottom:6 }}>{tab==="upload" ? (dragging ? "⬇️" : "📁") : (pasting ? "⌨️" : "📋")}</div>
-              <div style={{ fontSize:13, fontWeight:500 }}>{tab==="upload" ? (dragging ? "Drop to upload" : "Click or drag & drop") : (pasting ? "Press Ctrl+V / ⌘V" : "Click, then paste")}</div>
-              <div style={{ fontSize:11, marginTop:3 }}>PNG, JPG, WEBP</div>
-            </div>
+        <div style={{ position:"relative" }}>
+          <div
+            onClick={() => { if (image) return; if (tab==="upload") inputRef.current.click(); else { setPasting(true); pasteRef.current && pasteRef.current.focus(); } }}
+            onPaste={tab==="paste" ? handlePaste : undefined}
+            onDragOver={tab==="upload" && !image ? e => { e.preventDefault(); setDragging(true); } : undefined}
+            onDragLeave={tab==="upload" && !image ? () => setDragging(false) : undefined}
+            onDrop={tab==="upload" && !image ? handleDrop : undefined}
+            tabIndex={tab==="paste" && !image ? 0 : undefined}
+            ref={tab==="paste" ? pasteRef : undefined}
+            onFocus={() => tab==="paste" && setPasting(true)}
+            onBlur={() => setPasting(false)}
+            style={{
+              width:"100%", boxSizing:"border-box",
+              border: image ? "2px solid #94a3b8" : (dragging||pasting) ? "2px dashed #475569" : "2px dashed #cbd5e1",
+              borderRadius:12, background: image ? "transparent" : "#f8fafc",
+              minHeight:220, display:"flex", alignItems:"center", justifyContent:"center",
+              cursor: image ? "default" : "pointer", overflow:"hidden", transition:"all 0.2s", outline:"none",
+            }}
+          >
+            {image ? (
+              <AnnotatedImage src={image} annotations={annotations || []} />
+            ) : (
+              <div style={{ textAlign:"center", color: dragging ? "#475569" : "#94a3b8", padding:20 }}>
+                <div style={{ fontSize:32, marginBottom:6 }}>{tab==="upload" ? (dragging ? "⬇️" : "📁") : (pasting ? "⌨️" : "📋")}</div>
+                <div style={{ fontSize:13, fontWeight:500 }}>{tab==="upload" ? (dragging ? "Drop to upload" : "Click or drag & drop") : (pasting ? "Press Ctrl+V / ⌘V" : "Click, then paste")}</div>
+                <div style={{ fontSize:11, marginTop:3 }}>PNG, JPG, WEBP</div>
+              </div>
+            )}
+          </div>
+          {image && (
+            <button onClick={() => setAnnotating(true)} style={{
+              position:"absolute", bottom:8, right:8,
+              border:"none", background:"#1e293b", borderRadius:7,
+              padding:"6px 12px", fontSize:12, color:"#fff", cursor:"pointer", fontWeight:600,
+              display:"flex", alignItems:"center", gap:4, boxShadow:"0 2px 8px rgba(0,0,0,0.25)",
+            }}>
+              <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><rect x="1" y="1" width="10" height="10" rx="1" stroke="#fff" strokeWidth="1.5"/></svg>
+              {annotations && annotations.length > 0 ? "Edit annotations (" + annotations.length + ")" : "Annotate"}
+            </button>
           )}
         </div>
       )}
       <input ref={inputRef} type="file" accept="image/*" style={{ display:"none" }}
         onChange={e => { const f = e.target.files[0]; if (f) readFile(f, onUpload); }} />
       {image && !isNoVersion && (
-        <button onClick={() => onUpload(null)} style={{ border:"1px solid #e2e8f0", background:"#f8fafc", borderRadius:7, padding:"4px 0", fontSize:12, color:"#94a3b8", cursor:"pointer" }}>✕ Remove</button>
+        <button onClick={() => { onUpload(null); onAnnotationsChange([]); }} style={{ border:"1px solid #e2e8f0", background:"#f8fafc", borderRadius:7, padding:"4px 0", fontSize:12, color:"#94a3b8", cursor:"pointer" }}>✕ Remove</button>
       )}
       {!image && (
         <button onClick={onToggleNoVersion} style={{
@@ -288,9 +441,43 @@ function UploadBox({ label, image, onUpload, isNoVersion, onToggleNoVersion }) {
   );
 }
 
-// ── ComparisonCard ─────────────────────────────────────────────────────────────
+function AnnotatedImage({ src, annotations }) {
+  const canvasRef = useRef();
+  const imgRef = useRef();
+
+  useEffect(() => {
+    const img = new window.Image();
+    img.onload = () => {
+      imgRef.current = img;
+      redraw();
+    };
+    img.src = src;
+  }, [src]);
+
+  useEffect(() => { redraw(); }, [annotations]);
+
+  const redraw = () => {
+    const canvas = canvasRef.current;
+    const img = imgRef.current;
+    if (!canvas || !img) return;
+    const ctx = canvas.getContext("2d");
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    ctx.drawImage(img, 0, 0);
+    annotations.forEach(r => {
+      ctx.strokeStyle = "#ef4444";
+      ctx.lineWidth = Math.max(2, img.naturalWidth * 0.003);
+      ctx.strokeRect(r.x * img.naturalWidth, r.y * img.naturalHeight, r.w * img.naturalWidth, r.h * img.naturalHeight);
+      ctx.fillStyle = "rgba(239,68,68,0.08)";
+      ctx.fillRect(r.x * img.naturalWidth, r.y * img.naturalHeight, r.w * img.naturalWidth, r.h * img.naturalHeight);
+    });
+  };
+
+  return <canvas ref={canvasRef} style={{ width:"100%", height:"100%", display:"block" }} />;
+}
+
 function ComparisonCard({ card, index, total, mode, onChange, onRemove }) {
-  const { title, subtitle, oldLabel, newLabel, oldImg, newImg, oldIsNew, newIsNew, done } = card;
+  const { title, subtitle, oldLabel, newLabel, oldImg, newImg, oldIsNew, newIsNew, oldAnnotations, newAnnotations, done } = card;
   const ready = (newImg||newIsNew) && (oldImg||oldIsNew);
 
   const labelBar = lbl => (
@@ -326,11 +513,13 @@ function ComparisonCard({ card, index, total, mode, onChange, onRemove }) {
             </div>
             <div style={{ display:"flex", gap:16 }}>
               <UploadBox label={newLabel||"Newer"} image={newImg} isNoVersion={newIsNew}
-                onToggleNoVersion={() => onChange({newIsNew:!newIsNew, newImg:null})}
-                onUpload={v => onChange({newImg:v, done:false})} />
+                annotations={newAnnotations} onAnnotationsChange={v => onChange({newAnnotations:v})}
+                onToggleNoVersion={() => onChange({newIsNew:!newIsNew, newImg:null, newAnnotations:[]})}
+                onUpload={v => onChange({newImg:v, newAnnotations:[], done:false})} />
               <UploadBox label={oldLabel||"Older"} image={oldImg} isNoVersion={oldIsNew}
-                onToggleNoVersion={() => onChange({oldIsNew:!oldIsNew, oldImg:null})}
-                onUpload={v => onChange({oldImg:v, done:false})} />
+                annotations={oldAnnotations} onAnnotationsChange={v => onChange({oldAnnotations:v})}
+                onToggleNoVersion={() => onChange({oldIsNew:!oldIsNew, oldImg:null, oldAnnotations:[]})}
+                onUpload={v => onChange({oldImg:v, oldAnnotations:[], done:false})} />
             </div>
             <button disabled={!ready} onClick={() => onChange({done:true})} style={{
               background: ready ? "#1e293b" : "#e2e8f0",
@@ -344,11 +533,19 @@ function ComparisonCard({ card, index, total, mode, onChange, onRemove }) {
             <div style={{ display:"flex", gap:16 }}>
               <div style={{ flex:1 }}>
                 {labelBar(newLabel)}
-                {newIsNew ? placeholder() : <img src={newImg} alt={newLabel} style={{ width:"100%", display:"block", objectFit:"contain", borderRadius:"0 0 10px 10px", border:"1px solid #e2e8f0", borderTop:"none", background:"#f8fafc" }} />}
+                {newIsNew ? placeholder() : (
+                  <div style={{ borderRadius:"0 0 10px 10px", border:"1px solid #e2e8f0", borderTop:"none", overflow:"hidden", background:"#f8fafc" }}>
+                    <AnnotatedImage src={newImg} annotations={newAnnotations||[]} />
+                  </div>
+                )}
               </div>
               <div style={{ flex:1 }}>
                 {labelBar(oldLabel)}
-                {oldIsNew ? placeholder() : <img src={oldImg} alt={oldLabel} style={{ width:"100%", display:"block", objectFit:"contain", borderRadius:"0 0 10px 10px", border:"1px solid #e2e8f0", borderTop:"none", background:"#f8fafc" }} />}
+                {oldIsNew ? placeholder() : (
+                  <div style={{ borderRadius:"0 0 10px 10px", border:"1px solid #e2e8f0", borderTop:"none", overflow:"hidden", background:"#f8fafc" }}>
+                    <AnnotatedImage src={oldImg} annotations={oldAnnotations||[]} />
+                  </div>
+                )}
               </div>
             </div>
             {subtitle && <p style={{ textAlign:"center", margin:"14px 0 0", color:"#64748b", fontSize:13 }}>{subtitle}</p>}
@@ -359,7 +556,6 @@ function ComparisonCard({ card, index, total, mode, onChange, onRemove }) {
   );
 }
 
-// ── App ────────────────────────────────────────────────────────────────────────
 export default function App() {
   const [mode, setMode] = useState(null);
   const [cards, setCards] = useState([newCard(1)]);
@@ -394,7 +590,7 @@ export default function App() {
   };
 
   return (
-    <div style={{ fontFamily:"Inter,Arial,sans-serif", maxWidth:820, margin:"0 auto", padding:"32px 20px" }}>
+    <div style={{ fontFamily:"Inter,Arial,sans-serif", maxWidth:1100, margin:"0 auto", padding:"32px 20px" }}>
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:32 }}>
         <div>
           <h1 style={{ margin:0, fontSize:24, fontWeight:700, color:"#1e293b" }}>{mode==="web" ? "Web" : "Mobile"} Comparison Builder</h1>
@@ -404,9 +600,8 @@ export default function App() {
           <button onClick={() => { setCards([newCard(1)]); nextId.current = 2; setExportError(""); setPreviewUrl(null); }}
             style={{ border:"1px solid #fecaca", background:"#fff", borderRadius:10, padding:"8px 14px", fontSize:13, color:"#f87171", cursor:"pointer", fontWeight:600, display:"flex", alignItems:"center", gap:6, transition:"all 0.15s" }}
             onMouseEnter={e => { e.currentTarget.style.background="#fef2f2"; }}
-            onMouseLeave={e => { e.currentTarget.style.background="#fff"; }}
-          >
-            <svg width="13" height="13" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+            onMouseLeave={e => { e.currentTarget.style.background="#fff"; }}>
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
               <path d="M2 7a5 5 0 1 0 1.5-3.5L2 2" stroke="#f87171" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
               <path d="M2 2v3h3" stroke="#f87171" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
@@ -457,10 +652,10 @@ export default function App() {
         <div onClick={() => setPreviewUrl(null)} style={{
           position:"fixed", inset:0, background:"rgba(0,0,0,0.7)", zIndex:1000,
           display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"flex-start",
-          padding:"32px 16px", overflowY:"auto", cursor:"pointer",
+          padding:"16px", overflowY:"auto", cursor:"pointer",
         }}>
-          <div onClick={e => e.stopPropagation()} style={{ background:"#fff", borderRadius:16, padding:16, maxWidth:1000, width:"100%", boxShadow:"0 16px 48px rgba(0,0,0,0.3)", cursor:"default" }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background:"#fff", borderRadius:16, padding:12, maxWidth:1200, width:"100%", boxShadow:"0 16px 48px rgba(0,0,0,0.3)", cursor:"default" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
               <span style={{ fontWeight:600, fontSize:14, color:"#475569" }}>Preview</span>
               <button onClick={() => setPreviewUrl(null)} style={{ border:"1px solid #e2e8f0", background:"#f8fafc", borderRadius:8, padding:"4px 14px", fontSize:13, color:"#64748b", cursor:"pointer", fontWeight:600 }}>✕ Close</button>
             </div>
